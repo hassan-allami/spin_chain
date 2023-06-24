@@ -59,6 +59,52 @@ class SingleChain:
         else:
             return "invalid inputs"
 
+    # Sz(i) operator in S^z=m subspace and on site i
+    def sz_operator(self, i, m=0):
+        return diags(self.configs(m)[:, i])
+
+    # S+(i) / sqrt(2) operator acts on site i and takes Sz=m to Sz=m+1 subspace
+    def sp_operator(self, i, m=0):
+        conf = self.configs(m)
+        conf[:, i] += 1
+        confp = self.configs(m+1)
+        # print('aux =\n', conf)
+        dm = hilbert_space_size(m, self.length)
+        dp = hilbert_space_size(m+1, self.length)
+        sp = coo_matrix((dp, dm))
+        for c in range(dm):
+            if conf[c, i] != 2:
+                # print(conf[r])
+                # it finds to which conf in Sz=m+1 we map
+                row = np.where(np.equal(confp, conf[c]).all(axis=1))[0][0]
+                sp.data = np.append(sp.data, 1)
+                sp.row = np.append(sp.row, row)
+                sp.col = np.append(sp.col, c)
+        # print('sp =\n', sp)
+        # print(sp.shape)
+        return sp
+
+    # S-(i) / sqrt(2) operator acts on site i and takes Sz=m to Sz=m-1 subspace
+    def sm_operator(self, i, m=0):
+        conf = self.configs(m)
+        conf[:, i] -= 1
+        confm = self.configs(m - 1)
+        # print('aux =\n', conf)
+        d0 = hilbert_space_size(m, self.length)
+        dm = hilbert_space_size(m - 1, self.length)
+        sm = coo_matrix((dm, d0))
+        for c in range(d0):
+            if conf[c, i] != -2:
+                # print(conf[r])
+                # it finds to which conf in Sz=m+1 we map
+                row = np.where(np.equal(confm, conf[c]).all(axis=1))[0][0]
+                sm.data = np.append(sm.data, 1)
+                sm.row = np.append(sm.row, row)
+                sm.col = np.append(sm.col, c)
+        # print('sp =\n', sp)
+        # print(sp.shape)
+        return sm
+
     # the Hamiltonian for a single chain of length n, in the S^z=m subspace, and in the absence of magnetic fields
     @lru_cache  # this memoize
     def rec_chain_hamiltonian_szm(self, m, n):
@@ -798,7 +844,7 @@ class TwoChains:
         states = []
         for ma in ms:
             # counting the number of single chains states used
-            states = np.append(states, [m_len[abs(ma)], m_len[abs(m-ma)]])
+            states = np.append(states, [m_len[abs(ma)], m_len[abs(m - ma)]])
             # print(m_len[abs(ma)], m_len[abs(m - ma)], states, 2 * sum(m_len) - k)
             # building the BA - BB diagonal
             b_ab = np.append(b_ab, [ma - m / 2] * (m_len[abs(ma)] * m_len[abs(m - ma)]))
@@ -858,7 +904,7 @@ class TwoChains:
                     np.concatenate((all_szsz[ma], all_smsp[ma]), axis=1)
             else:
                 sasb[row: row + m_len[abs(ma)] * m_len[abs(m - ma)],
-                     row - m_len[abs(ma - 1)] * m_len[abs(m - ma + 1)]: col] = \
+                row - m_len[abs(ma - 1)] * m_len[abs(m - ma + 1)]: col] = \
                     np.concatenate((all_smsp[ma - 1].T, all_szsz[ma], all_smsp[ma]), axis=1)
             row = row + m_len[abs(ma)] * m_len[abs(m - ma)]
             col = col + m_len[abs(ma + 2)] * m_len[abs(m - ma - 2)]
@@ -1250,157 +1296,50 @@ class TwoChains:
 
 
 if __name__ == "__main__":
-
-    def chop(x):
-        if abs(x) > 1e-12:
-            return x
-        else:
-            return 0
-
-
-    Chop = np.vectorize(chop)
-
-    L = 8  # length for test
+    L = 7  # length for test
     M = 0  # the total angular momentum
+    site = 1  # site number
     # print('for two chains of length', L, 'the size of S_tot^z = 0 subspace size is', hilbert_space_size(M, 2 * L))
     print('for a chain of length', L, 'the size of S_tot^z =', M, 'subspace size is', hilbert_space_size(M, L))
 
-    Chains = TwoChains(L)
-    K1 = 4
-    start = time.time()
-    Diagonal_E, B_ab, SaSb, States = Chains.hamiltonian_eff(k=K1)
-    end = time.time()
-    # np.savetxt('/tmp/SASB.dat', SaSb)
-    # np.savetxt('/tmp/B_AB.dat', B_ab)
-    # np.savetxt('/tmp/Diagonal_AB.dat', Diagonal_E)
+    Chain = SingleChain(L)
 
-    # SASB = np.loadtxt('data/from_hercules/SASB_8-14-44.dat')
-    # print(sum(sum(SASB - SaSb)))
+    E0, V0 = Chain.eigen_system(m=M, k=3)
+    Ep, Vp = Chain.eigen_system(m=M + 1, k=3)
+    Em, Vm = Chain.eigen_system(m=M - 1, k=3)
+    # print('E =', E0.round(2))
+    # print('V = \n', Vp.round(2))
+    S_T0 = np.zeros(L)
+    S_Tp = np.zeros(L)
+    S_Tm = np.zeros(L)
+    T0_Tp = np.zeros(L)
+    T0_Tm = np.zeros(L)
+    Tp_Tp = np.zeros(L)
+    Tm_Tm = np.zeros(L)
+    for site in range(L):
+        Sz = Chain.sz_operator(i=site, m=M)
+        Sp = Chain.sp_operator(i=site, m=M)
+        Sm = Chain.sm_operator(i=site, m=M)
+        Szp = Chain.sz_operator(i=site, m=M+1)
+        Szm = Chain.sz_operator(i=site, m=M-1)
+        S_T0[site] = abs(V0[:, 1] @ Sz @ V0[:, 0]) ** 2
+        T0_Tp[site] = abs(Vp[:, 0] @ Sp @ V0[:, 0]) ** 2
+        T0_Tm[site] = abs(Vm[:, 0] @ Sm @ V0[:, 0]) ** 2
+        Tp_Tp[site] = abs(Vp[:, 0] @ Szp @ Vp[:, 0]) ** 2
+        Tm_Tm[site] = abs(Vm[:, 0] @ Szm @ Vm[:, 0]) ** 2
+        S_Tp[site] = abs(Vp[:, 0] @ Sp @ V0[:, 1]) ** 2
+        S_Tm[site] = abs(Vm[:, 0] @ Sm @ V0[:, 1]) ** 2
 
-    # Bab = 0.1
-    # Jab = 0.2
+        print(site, end=' ')
 
-    # E, V, States = Chains.eigen_system(Bab, Jab, k1=K1)
+    plt.plot(S_T0, 's', mfc='none', ms=16, label='$\Sigma(S,T_0)$')
+    plt.plot(S_Tp, 'x', mfc='none', ms=16, label='$\Sigma(S,T_0)$')
+    plt.plot(S_Tm, 'o', mfc='none', ms=16, label='$\Sigma(S,T_0)$')
+    plt.plot(T0_Tm, 's', mfc='none', ms=16, label='$\Sigma(S,T_0)$')
+    plt.plot(T0_Tp, 'x', mfc='none', ms=16, label='$\Sigma(S,T_0)$')
+    plt.plot(Tm_Tm, '<', mfc='none', ms=16, label='$\Sigma(S,T_0)$')
+    plt.plot(Tp_Tp, '>', mfc='none', ms=16, label='$\Sigma(S,T_0)$')
+    plt.legend(loc='center left', bbox_to_anchor=(1.0, 0.5), fontsize=15)
 
-    print('it took', end - start, 'seconds to build the effective two chain Hamiltonian')
-    print('number of single chain states used:', States)
-    # # print(E)
-    print('matrix size', len(B_ab))
-    # np.savetxt('/tmp/SASB.dat', SS)
-    # print(SS.shape)
-    # print(Diagonal_E.shape)
-    # print(max(B_AB))
-
-    # Chain = SingleChain(L)
-    # start = time.time()
-    # H = Chain.rec_chain_hamiltonian_szm(0, L)
-    # B = 0
-    # Hb = B * Chain.local_field(0)
-    # end = time.time()
-    # print('number of nonzero elements =', H.nnz)
-    # print('it takes', (end - start), 'seconds to build the matrix')
-    #
-    # start = time.time()
-    # E0, V0 = Chain.eigen_system(M, k=6)
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to find the eigenvalues')
-    # print('Delta =', E0[1] - E0[0])
-    # print('Gamma =', E0[2] - E0[1])
-
-    # start = time.time()
-    # EF0, VF0 = Chain.eigen_system_full(b0=1e-8, k=10)
-    # # EF, VF = Chain.eigen_system_full(b1=0.1)
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to find the eigenstates in the full Hilbert space')
-    # Max_amp = np.max(VF0 ** 2, axis=1)
-    # print(Max_amp[Max_amp > 1e-3].shape)
-    # print(3**L)
-    # print(hilbert_space_size(2, L))
-    # print('S_tot^z =', Chain.sz_tot_full(VF0))
-
-    # start = time.time()
-    # C = Chain.configs(0)
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to build the configurations')
-    # # print(C)
-    #
-    # start = time.time()
-    # CR = Chain.rec_configs(0, L)
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to build the configurations recursively')
-    # # print(CR.toarray())
-    # print(sum(CR - C))
-
-    # start = time.time()
-    # B = 0.3
-    # T = np.linspace(0, 10, 15)
-    # a0 = np.zeros((len(T), 2))
-    # a1 = np.zeros((len(T), 2))
-    # for j in range(len(T)):
-    #     U = Chain.unitary(B, T[j])
-    #     a0[j, :] = abs(V0[:, :2].T @ U @ V0[:, 0]) ** 2
-    #     a1[j, :] = abs(V0[:, :2].T @ U @ V0[:, 1]) ** 2
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to compute the unitary evolution')
-    # start = time.time()
-    # A0 = np.zeros((len(T), 2))
-    # A1 = np.zeros((len(T), 2))
-    # for j in range(len(T)):
-    #     UA = Chain.unitary_approx(B, T[j], d=10)
-    #     A0[j, :] = np.abs([UA[0, 0], UA[1, 0]]) ** 2
-    #     A1[j, :] = np.abs([UA[0, 1], UA[1, 1]]) ** 2
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to compute the approx unitary evolution')
-    # f, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 5))
-    # ax1.plot(T, a0[:, 0])
-    # ax1.plot(T, a0[:, 1])
-    # ax1.plot(T, 1 - a0[:, 0] - a0[:, 1])
-    # ax1.plot(T, A0[:, 0], ':')
-    # ax1.plot(T, A0[:, 1], '.')
-    # ax1.plot(T, 1 - A0[:, 0] - A0[:, 1], '.')
-    # ax1.axhline(y=0.5, ls='--', color='r')
-    # ax2.plot(T, a1[:, 0])
-    # ax2.plot(T, a1[:, 1])
-    # ax2.plot(T, 1 - a1[:, 0] - a1[:, 1])
-    # ax2.plot(T, A1[:, 0], ':')
-    # ax2.plot(T, A1[:, 1], '.')
-    # ax2.plot(T, 1 - A1[:, 0] - A1[:, 1], '.')
-    # ax2.axhline(y=0.5, ls='--', color='r')
-    # plt.show()
-
-    # start = time.time()
-    # B = np.linspace(0, 0.25, 15)
-    # eps = np.zeros((len(B), 2))
-    # for j in range(len(B)):
-    #     eps[j, :] = Chain.admix(B[j])
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to find the admixture')
-    # # print('(eps0, eps1) =', eps.shape)
-    # plt.figure()
-    # plt.plot(B, eps)
-    # plt.axhline(y=0.01, ls='--', color='grey')
-    # plt.axvline(x=E0[1]-E0[0], ls='--', color='k')
-    #
-    #
-    # start = time.time()
-    # SZ = Chain.sz_avg(0, (V0[:, 0] - V0[:, 1])/np.sqrt(2))
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to compute <Sz>')
-    # # print(SZ)
-    # plt.figure()
-    # plt.bar(range(1, L+1), SZ)
-    # plt.axhline(y=-0.5, ls='--', color='grey')
-    # plt.axhline(y=0.5, ls='--', color='grey')
-    # plt.show()
-
-    # start = time.time()
-    # S = Chain.rec_s_tot(M, L)
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to build the S_tot matrix')
-    # print(np.round((V0.T @ S @ V0).diagonal()))
-    #
-    # start = time.time()
-    # SF = Chain.rec_s_tot_full()
-    # end = time.time()
-    # print('it takes', (end - start), 'seconds to build the S_tot matrix in the full Hilbert space')
-    # print(np.round((VF0.T @ SF @ VF0).diagonal()))
+    # plt.tight_layout()
+    plt.show()
